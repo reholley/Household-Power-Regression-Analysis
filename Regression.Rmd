@@ -1,0 +1,197 @@
+---
+Rachel Holley
+Regression
+---
+# Loading the Data
+[data](https://archive.ics.uci.edu/ml/datasets/Individual+household+electric+power+consumption)
+```{r}
+# for now, the file will download but you will need to unzip file and add your path if necessary
+url <- "https://github.com/reholley/Household-Power-Regression-Analysis/archive/refs/heads/main.zip"
+download.file(url, destfile = "Household-Power-Regression-Analysis-main")
+unzip("Household-Power-Regression-Analysis-main\\household_power_consumption.zip", ".", list = TRUE)
+power <- read.table("household_power_consumption.txt", header = TRUE)
+```
+
+# Data Cleaning Process
+The columns in the data are all very useful so I didn't need to take out any columns. However, I needed to change a lot of the data types to numeric values as the columns with numbers were all character strings originally. I also made new columns to contain the month, year, hour, and minute that the data was collected. I had to massively cut down on the amount of rows in the data set because R can only handle a million rows or so; however, due to the algorithms for regression I had to cut down the data even more. I ended up deciding that the data and predictions would still be interesting if I only observed one month from the most recent year. I ended up choosing July of 2010 as the month I observed and predicted on for my data since July is in the middle of summer and I was curious to see how much power a single household used during a summer month. I assigned every other month and year to NA and then removed every row that had empty data or NA's.
+```{r}
+library(lubridate)
+library(stringr)
+library(ggplot2)
+library(caret)
+library(e1071)
+library(tree)
+library(ggplot2)
+library(randomForest)
+
+# Converting all the number character strings to numbers
+power$Global_active_power <- as.double(power$Global_active_power)
+power$Global_reactive_power <- as.double(power$Global_reactive_power)
+power$Voltage <- as.double(power$Voltage)
+power$Global_intensity <- as.double(power$Global_intensity)
+power$Sub_metering_1 <- as.double(power$Sub_metering_1)
+power$Sub_metering_2 <- as.double(power$Sub_metering_2)
+
+# Creating the date in mm/yy format
+a <- as.factor(power$Date)
+abis <- strptime(a, format = "%d/%m/%Y")
+b <- as.Date(abis, format = "%m-%y")
+c <- format(b, format = "%m-%y")
+
+power$Date <- c
+
+# Creating a month and year column to hold the specific month and year for each data entry
+power$month <- c(substr(power$Date,  1, nchar(power$Date)-3))
+power$year <- c(str_sub(power$Date,4))
+
+# Converting the strings to integers
+power$month <- as.integer(power$month)
+power$year <- as.integer(power$year)
+
+# Creating a hour and year column to hold the specific hour and minute for each data entry
+power$hour <- c(substr(power$Time,  1, nchar(power$Time)-6))
+power$minute <- c(str_sub(power$Time,4))
+power$minute <- c(substr(power$minute,  1, nchar(power$minute)-3))
+
+# Converting the strings to integers
+power$hour <- as.integer(power$hour)
+power$minute <- as.integer(power$minute)
+
+# Assigning all columns NA if there is no data in them
+power$Date[power$Date == ""] <- NA
+power$Time[power$Time == ""] <- NA
+power$Global_active_power[power$Global_active_power == ""] <- NA
+power$Global_reactive_power[power$Global_reactive_power == ""] <- NA
+power$Voltage[power$Voltage == ""] <- NA
+power$Global_intensity[power$Global_intensity == ""] <- NA
+power$Sub_metering_1[power$Sub_metering_1 == ""] <- NA
+power$Sub_metering_2[power$Sub_metering_2 == ""] <- NA
+power$Sub_metering_3[power$Sub_metering_3 == ""] <- NA
+
+# Trimming down the data so that the most recent data is what we predict on and only during July
+power$year[power$year == 6] <- NA
+power$year[power$year == 7] <- NA
+power$year[power$year == 8] <- NA
+power$year[power$year == 9] <- NA
+power$month[power$month == 1] <- NA
+power$month[power$month == 2] <- NA
+power$month[power$month == 3] <- NA
+power$month[power$month == 4] <- NA
+power$month[power$month == 5] <- NA
+power$month[power$month == 6] <- NA
+power$month[power$month == 8] <- NA
+power$month[power$month == 9] <- NA
+power$month[power$month == 10] <- NA
+power$month[power$month == 11] <- NA
+
+# Removing every row that contains NA
+power <- na.omit(power)
+```
+
+# Using 5 Functions for Data Exploration
+In this data set, I was quite curious to see the maximum amount of power that was actively being used, that was reactively being used, and the intensity of the power. I also decided to see if there was any correlation between the active power and intensity and reactive power and intensity. I also decided to see how often high and low power was used and what hour used the most intense power for the water-heater & AC units.
+```{r}
+# Maximum power for the active power, reactive power, and intensity for a single household
+print(paste("The maximum active power is: ",max(power$Global_active_power)))
+print(paste("The maximum reactive power is: ",max(power$Global_reactive_power)))
+print(paste("The maximum intensity power is: ",max(power$Global_intensity)))
+
+# Correlation between the global power types
+print(paste("The correlation between active power vs, intensity is:",cor(power$Global_active_power, power$Global_intensity)))
+print(paste("The correlation between reactive power vs, intensity is:",cor(power$Global_reactive_power, power$Global_intensity)))
+
+# Finding the hour that the least amount of power is used
+max_power_hour <- c(ifelse(power$Global_active_power > 5, power$hour, "under"))
+max_power_hour <- as.factor(max_power_hour)
+paste("Summary of High Power per Hour")
+summary(max_power_hour)
+
+# Finding the hour the the most amount of power is used
+min_power_hour <- c(ifelse(power$Global_active_power < 2, power$hour, "over"))
+min_power_hour <- as.factor(min_power_hour)
+paste("Summary of Low Power per Hour")
+summary(min_power_hour)
+
+# Finding what hour has the highest value in sub_metering_3 (which tells us the electricity used for the water-heater and air-conditioner)
+max_hour_usage <- c(ifelse(power$Sub_metering_3 > 25, power$hour, "under"))
+max_hour_usage <- as.factor(max_hour_usage)
+paste("Summary of High Power for the water-heater + AC per Month")
+summary(max_hour_usage)
+```
+
+
+# Informative R Graphs
+I decided to use some observations from the data exploration as well as another curiosity about the data. I wanted to see  the active power levels for each hour during the month. Which hour had the highest usage? I was also curious to see the general pattern for the voltage of the data observed.
+```{r}
+# Hour vs. Active Power
+ggplot(data = power, aes(x = hour, y = Global_active_power)) + geom_bar(stat = "identity", fill = "orange", alpha = 0.6, width = 0.4) + ylab("active power")
+
+# Voltage Frequency
+h <- hist(power$Voltage, breaks = 10, col = "orange", xlab = "voltage", ylim = c(0,50000), main = "Voltage Frequency")
+xfit <- seq(min(power$Voltage),max(power$Voltage),length=40)
+yfit <- dnorm(xfit,mean=mean(power$Voltage),sd=sd(power$Voltage))
+yfit <- yfit*diff(h$mids[1:2])*length(power$Voltage)
+lines(xfit, yfit, col="red", lwd=2)
+```
+
+
+## Machine Learning Algorithms
+I choose these specific algorithms because my target variable and predictors are all numeric values. I wanted to see if the active & reactive power as well as voltage had any effect on the intensity of the power being used. I determined that the linear regression, support vector machine, and decision tree algorithms would be the best to use for regression. The MSE for the Machine Learning algorithms are not the worst and actually fairly good I would say, especially for the linear model and svm model. The MSE for the linear model was 0.0253, the MSE for the svm model was 0.0246, and the MSE for the decision tree was 0.2314. All of these are not bad but svm definitely had the smallest MSE. I would say that due to these values, the models have been a good fit for the data.
+```{r}
+# Creating the train and test data sets
+i <- c(1:(nrow(power)*0.8))
+train <- power[i,]
+test <- power[-i,]
+
+# Linear Model Algorithm
+lm1 <- lm(Global_intensity ~ Global_active_power + Global_reactive_power + Voltage, data = train)
+pred1 <- predict(lm1, newdata = train)
+mse1 <- mean((pred1 - train$Global_intensity)^2)
+
+cat(paste("The summary of the linear model is:"))
+summary(lm1)
+print(paste("The mse on this model is:", mse1))
+
+# SVM Algorithm
+svm1 <- svm(Global_intensity ~ Global_active_power + Global_reactive_power + Voltage, data=train, kernel="linear", cost = 1, scale = TRUE)
+pred2 <- predict(svm1, newdata = test)
+mse2 <- mean((pred2 - test$Global_intensity)^2)
+
+cat(paste("The summary of the SVM model is:"))
+summary(svm1)
+print(paste("The mse on this model is:", mse2))
+
+# Decision Tree Algorithm
+tree1 <- tree(Global_intensity ~ Global_active_power + Global_reactive_power + Voltage, data = train)
+pred3 <- predict(tree1, newdata = test)
+mse3 <- mean((pred3 - test$Global_intensity)^2)
+
+paste("The summary of the decision tree model is:")
+summary(tree1)
+print(paste("The mse on this model is:", mse3))
+```
+
+## Ensemble Method
+I choose this ensemble method because it is fast and simple, but also because it discovers new trees that might outperform other trees because it is a greedy algorithm that chooses the strongest predictor first. I wanted to use this because I specifically use the decision tree algorithm and I wanted to see how it compared. The MSE ends up being better than the MSE for the decision tree. The Random Forest MSE is 0.1464 which still shows that it is a good model for the data.
+```{r}
+# randomForest algorithm
+forest1 <- randomForest(Global_intensity ~ Global_active_power + Global_reactive_power + Voltage, data = train, importance = TRUE)
+pred4 <- predict(forest1, newdata = test, type = "response")
+mse4 <- mean((pred4 - test$Global_intensity)^2)
+
+cat(paste("The summary of the randomForest model is:"))
+forest1
+print(paste("The mse on this model is:", mse4))
+```
+
+# Result Analysis
+The best results came from the svm model followed by (in order): linear regression, random forest, then decision tree. 
+
+However, if we are ranking them based on the time it took to complete, 
+I would say that linear regression was the fastest followed by (in order): decision tree, svm, then random forest. The completion time ranking is based on my observations.
+
+I am not surprised that the linear regression algorithm performed well and fast because it is the simplest to use on large amounts of data. Furthermore, I am not surprised that the svm and decision tree algorithms took longer to complete because there is general more going on behind the scenes to the data that takes it longer to complete. Lastly, I was also surprised on how long it took for random forest to run on the data simply because the decision tree algorithm was much faster than random forest. As far as results go, I think that svm outperformed them all because it does have a control on how many violations the algorithm will allow to occur. For the decision tree vs. random forest I was actually surprised with how well the random forest preformed, though I suspect the reason why is because it is a greedy algorithm and actively looks for the strongest predictor. Overall, the results make sense based on the algorithms I choose to use.
+
+I believe that svm performed the best result wise because it controls how much we allow variables to violate the decision boundary. This algorithm specifically works better with fewer predictors which could be a contributing factor as well.
+
+As for the big picture, the data confirmed for me that there is a strong relationship between the intensity of the power usage and the amount of active vs. reactive power being used along with the voltage. This would be useful in figuring out how to reduce power usage overall and if certain appliances contribute to more power usage than others. Appliance companies could use this information to be able to make more energy efficient household appliances.
